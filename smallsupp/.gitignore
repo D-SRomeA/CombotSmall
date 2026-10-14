@@ -1,4 +1,26 @@
-.venv/
-.env
+# Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyo
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and local databases
+*.log
+*.db
+*.sqlite3
+
+# Google credentials
+credentials.json
+service_account.json
+token.json
+
+# VS Code local files
+.vscode/
