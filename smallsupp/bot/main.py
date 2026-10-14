@@ -9,7 +9,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-
+from bot.storage import init_db, save_request
 
 logging.basicConfig(
     level=logging.INFO,
@@ -125,46 +125,57 @@ async def receive_ticket_handler(
     message: Message,
     state: FSMContext,
 ) -> None:
-    if message.from_user is None:
-        logger.warning("Получено обращение без from_user")
-        await state.clear()
-        return
-
-    if message.text is None:
-        await message.answer("Пожалуйста, отправьте обращение текстом.")
+    if message.chat.type != "private":
+        await message.answer("Обращение нужно отправить в личный чат с ботом.")
         return
 
     user = message.from_user
-    ticket_text = message.text.strip()
+    text = message.text
+
+    if user is None or text is None:
+        await message.answer("Не удалось обработать сообщение.")
+        return
+
+    ticket_text = text.strip()
 
     if not ticket_text:
         await message.answer("Текст обращения не должен быть пустым.")
         return
 
-    logger.info(
-        "Новое обращение: user_id=%s, username=%s, text=%r",
-        user.id,
-        user.username,
-        ticket_text,
-    )
+    try:
+        request_id = await asyncio.to_thread(
+            save_request,
+            received_at=message.date.isoformat(),
+            chat_id=message.chat.id,
+            telegram_message_id=message.message_id,
+            user_id=user.id,
+            username=user.username,
+            message_text=ticket_text,
+        )
+    except Exception:
+        logger.exception("Ошибка сохранения обращения")
 
-    # TODO:
-    # Здесь на следующем этапе появится запись строки в Google Sheet:
-    # дата/время, user_id, username, текст, статус «Новое».
+        await message.answer(
+            "Не удалось сохранить обращение.\n"
+            "Попробуйте отправить текст ещё раз."
+        )
+        return
 
     await state.clear()
 
+    logger.info("Обращение №%s сохранено", request_id)
+
     await message.answer(
-        "✅ Обращение принято.\n"
-        "Ответ будет отправлен в этот чат после обработки сотрудником.",
+        f"Обращение №{request_id} зарегистрировано.",
         reply_markup=main_keyboard(),
     )
 
-
 async def main() -> None:
+    await asyncio.to_thread(init_db)
+
     bot = Bot(token=BOT_TOKEN)
 
-    logger.info("Бот запущен")
+    logger.info("База данных готова. Запускаем бота")
 
     try:
         await dp.start_polling(bot)
