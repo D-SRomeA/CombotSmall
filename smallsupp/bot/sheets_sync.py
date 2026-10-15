@@ -27,6 +27,7 @@ def send_request(
         "user_id": str(request_data["user_id"]),
         "username": request_data["username"],
         "message_text": request_data["message_text"],
+        "branch": request.branch
     }
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")

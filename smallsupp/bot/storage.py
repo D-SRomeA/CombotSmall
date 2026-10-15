@@ -33,6 +33,7 @@ def save_request(
     user_id: int,
     username: str | None,
     message_text: str,
+    branch=user_branch
 ) -> int:
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as connection:
         with connection:
