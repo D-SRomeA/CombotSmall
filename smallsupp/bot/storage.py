@@ -74,3 +74,40 @@ def save_request(
             request_id = int(row[0])
 
     return request_id
+
+def get_pending_requests(limit: int = 10) -> list[dict]:
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as connection:
+        connection.row_factory = sqlite3.Row
+
+        rows = connection.execute(
+            """
+            SELECT
+                id,
+                received_at,
+                chat_id,
+                telegram_message_id,
+                user_id,
+                username,
+                message_text
+            FROM requests
+            WHERE sync_status = 'pending'
+            ORDER BY id
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+
+        return [dict(row) for row in rows]
+
+
+def mark_request_synced(request_id: int) -> None:
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as connection:
+        with connection:
+            connection.execute(
+                """
+                UPDATE requests
+                SET sync_status = 'synced'
+                WHERE id = ?
+                """,
+                (request_id,),
+            )

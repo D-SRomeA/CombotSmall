@@ -2,6 +2,9 @@ import asyncio
 import logging
 import os
 
+from contextlib import suppress
+
+from bot.sheets_sync import sync_loop
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
@@ -26,7 +29,13 @@ except KeyError as error:
     raise RuntimeError(
         "Не найден BOT_TOKEN. Создайте .env в корне проекта."
     ) from error
+APPS_SCRIPT_URL = os.getenv("APPS_SCRIPT_URL", "").strip()
+APPS_SCRIPT_SECRET = os.getenv("APPS_SCRIPT_SECRET", "").strip()
 
+if not APPS_SCRIPT_URL or not APPS_SCRIPT_SECRET:
+    raise RuntimeError(
+        "В .env необходимо задать APPS_SCRIPT_URL и APPS_SCRIPT_SECRET."
+    )
 
 class TicketForm(StatesGroup):
     waiting_for_text = State()
@@ -53,10 +62,16 @@ def main_keyboard():
 
 
 @dp.message(CommandStart())
-async def start_handler(message: Message) -> None:
+async def start_handler(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    await state.clear()
+
     await message.answer(
         "Здравствуйте! Это бот отдела.\n\n"
-        "Нажмите «Создать обращение», чтобы отправить сообщение сотрудникам.",
+        "Нажмите «Создать обращение», "
+        "чтобы отправить сообщение сотрудникам.",
         reply_markup=main_keyboard(),
     )
 
@@ -73,7 +88,7 @@ async def help_handler(message: Message) -> None:
 
 @dp.callback_query(F.data == "help:show")
 async def show_help_handler(callback: CallbackQuery) -> None:
-    if callback.message is None:
+    if not isinstance(callback.message, Message):
         await callback.answer(
             "Исходное сообщение недоступно.",
             show_alert=True,
@@ -91,7 +106,7 @@ async def create_ticket_handler(
     callback: CallbackQuery,
     state: FSMContext,
 ) -> None:
-    if callback.message is None:
+    if not isinstance(callback.message, Message):
         await callback.answer(
             "Исходное сообщение недоступно.",
             show_alert=True,
@@ -170,18 +185,45 @@ async def receive_ticket_handler(
         reply_markup=main_keyboard(),
     )
 
+@dp.message(TicketForm.waiting_for_text)
+async def unsupported_ticket_message(message: Message) -> None:
+    await message.answer(
+        "Сейчас принимаются только текстовые обращения.\n"
+        "Опишите вопрос текстом или отправьте /cancel."
+    )
+
+@dp.message(F.chat.type == "private")
+async def message_without_active_form(message: Message) -> None:
+    await message.answer(
+        "Чтобы зарегистрировать обращение, нажмите "
+        "«Создать обращение».\n\n"
+        "Если бот был перезапущен, начните создание заново.",
+        reply_markup=main_keyboard(),
+    )
+
 async def main() -> None:
     await asyncio.to_thread(init_db)
 
     bot = Bot(token=BOT_TOKEN)
 
-    logger.info("База данных готова. Запускаем бота")
+    sync_task = asyncio.create_task(
+        sync_loop(APPS_SCRIPT_URL, APPS_SCRIPT_SECRET)
+    )
+
+    logger.info("База готова. Бот и синхронизация запущены")
 
     try:
         await dp.start_polling(bot)
+
     finally:
+        sync_task.cancel()
+
+        with suppress(asyncio.CancelledError):
+            await sync_task
+
         await bot.session.close()
 
 
 if __name__ == "__main__":
     asyncio.run(main())
+
