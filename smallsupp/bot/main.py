@@ -12,7 +12,12 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-from bot.storage import init_db, save_request
+from bot.storage import (
+    init_db,
+    save_request,
+    get_user_branch,
+    save_user_branch,
+)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,7 +44,8 @@ if not APPS_SCRIPT_URL or not APPS_SCRIPT_SECRET:
 
 class TicketForm(StatesGroup):
     waiting_for_text = State()
-
+class RegistrationForm(StatesGroup):
+    waiting_for_branch = State()
 
 dp = Dispatcher()
 
@@ -62,19 +68,76 @@ def main_keyboard():
 
 
 @dp.message(CommandStart())
-async def start_handler(
+async def start_handler(message: Message, state: FSMContext) -> None:
+    user = message.from_user
+
+    if user is None:
+        return
+
+    user_branch = await asyncio.to_thread(
+        get_user_branch,
+        user.id,
+    )
+
+    if user_branch:
+        await message.answer(
+            "Здравствуйте! Это бот отдела.\n\n"
+            f"Ваш филиал: {user_branch}\n\n"
+            "Нажмите «Создать обращение», чтобы отправить сообщение сотрудникам.",
+            reply_markup=main_keyboard(),
+        )
+        return
+
+    await state.set_state(RegistrationForm.waiting_for_branch)
+
+    await message.answer(
+        "Здравствуйте! Для работы с ботом укажите название вашего филиала.\n\n"
+        "Например: Филиал №127"
+    )
+
+
+@dp.message(RegistrationForm.waiting_for_branch, F.text)
+async def receive_branch_handler(
+    message: Message,
+    state: FSMContext,
+) -> None:
+    user = message.from_user
+    branch = message.text
+
+    if user is None or branch is None:
+        return
+
+    branch = branch.strip()
+
+    if not branch:
+        await message.answer("Название филиала не должно быть пустым.")
+        return
+
+    await asyncio.to_thread(
+        save_user_branch,
+        user_id=user.id,
+        username=user.username,
+        branch=branch,
+    )
+
+    await state.clear()
+
+    await message.answer(
+        f"Филиал сохранён: {branch}\n\n"
+        "Теперь вы можете создавать обращения.",
+        reply_markup=main_keyboard(),
+    )
+
+@dp.message(RegistrationForm.waiting_for_branch, Command("cancel"))
+async def cancel_registration_handler(
     message: Message,
     state: FSMContext,
 ) -> None:
     await state.clear()
 
     await message.answer(
-        "Здравствуйте! Это бот отдела.\n\n"
-        "Нажмите «Создать обращение», "
-        "чтобы отправить сообщение сотрудникам.",
-        reply_markup=main_keyboard(),
+        "Регистрация филиала отменена. Отправьте /start, чтобы начать заново."
     )
-
 
 @dp.message(Command("help"))
 async def help_handler(message: Message) -> None:
@@ -157,9 +220,20 @@ async def receive_ticket_handler(
         await message.answer("Текст обращения не должен быть пустым.")
         return
 
+    user_branch = await asyncio.to_thread(
+    get_user_branch,
+    user.id,
+)
+
+    if not user_branch:
+        await state.clear()
+        await message.answer(
+            "Сначала укажите ваш филиал. Для этого отправьте /start."
+        )
+        return    
     try:
         request_id = await asyncio.to_thread(
-            save_request,
+            save_request, branch=user_branch,
             received_at=message.date.isoformat(),
             chat_id=message.chat.id,
             telegram_message_id=message.message_id,
