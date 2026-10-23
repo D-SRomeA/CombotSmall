@@ -27,7 +27,7 @@ def send_request(
         "user_id": str(request_data["user_id"]),
         "username": request_data["username"],
         "message_text": request_data["message_text"],
-        "branch": request_data["branch"]
+        "branch": request_data["branch"],
     }
 
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -39,12 +39,49 @@ def send_request(
         method="POST",
     )
 
-    with urlopen(request, timeout=45) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=45) as response:
+            status = response.status
+            final_url = response.geturl()
+            raw_body = response.read()
+    except Exception as error:
+        from urllib.error import HTTPError
+
+        if isinstance(error, HTTPError):
+            # Не выводим URL целиком: в нём могут быть секреты.
+            error_body = error.read(1000).decode("utf-8", errors="replace")
+            logger.error(
+                "HTTP-ошибка Apps Script: status=%s, "
+                "тип=%s, тело ответа=%r",
+                error.code,
+                error.headers.get("Content-Type"),
+                error_body,
+            )
+        raise
+
+    content_type = response.headers.get("Content-Type", "")
+
+    try:
+        result = json.loads(raw_body.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        # Ограничиваем объём диагностического вывода.
+        preview = raw_body[:1000].decode("utf-8", errors="replace")
+        logger.error(
+            "Apps Script вернул невалидный JSON: status=%s, "
+            "content_type=%r, final_url=%r, body_preview=%r",
+            status,
+            content_type,
+            final_url,
+            preview,
+        )
+        raise RuntimeError(
+            "Ответ Apps Script не является корректным JSON"
+        ) from error
 
     if not isinstance(result, dict):
         raise RuntimeError(
-            f"Apps Script вернул неожиданный формат ответа: {type(result).name}"
+            f"Apps Script вернул неожиданный формат ответа: "
+            f"{type(result).name}"
         )
 
     if result.get("ok") is not True or result.get("request_key") != request_key:
