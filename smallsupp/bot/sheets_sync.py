@@ -42,12 +42,19 @@ def send_request(
     with urlopen(request, timeout=45) as response:
         result = json.loads(response.read().decode("utf-8"))
 
-    if (
-        not isinstance(result, dict)
-        or result.get("ok") is not True
-        or result.get("request_key") != request_key
-    ):
-        raise RuntimeError("Apps Script не подтвердил сохранение обращения.")
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"Apps Script вернул неожиданный формат ответа: {type(result).name}"
+        )
+
+    if result.get("ok") is not True or result.get("request_key") != request_key:
+        raise RuntimeError(
+            "Apps Script не подтвердил сохранение: "
+            f"ok={result.get('ok')!r}, "
+            f"request_key={result.get('request_key')!r}, "
+            f"ожидаемый ключ={request_key!r}, "
+            f"ошибка={result.get('error')!r}"
+        )
 
 
 async def sync_loop(url: str, secret: str) -> None:
@@ -76,10 +83,9 @@ async def sync_loop(url: str, secret: str) -> None:
 
                 except Exception as error:
                     # Не выводим URL, секрет и содержимое обращения.
-                    logger.warning(
-                        "Обращение №%s осталось в очереди. Тип ошибки: %s",
+                    logger.exception(
+                        "Обращение №%s осталось в очереди.",
                         request_data["id"],
-                        type(error).__name__,
                     )
 
         except Exception as error:
